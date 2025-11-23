@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import {buildMetrics, Metric} from "./prometheus-builder";
 
 dotenv.config();
 dotenv.config({
@@ -16,14 +17,47 @@ const OPNSENSE_API_SECRET = process.env.OPNSENSE_API_SECRET ?? "";
 
 const app = express();
 
-let online: string[] = [];
+interface MACStatus {
+    memberId: string;
+    memberUsername: string;
+    mac: string;
+    online: boolean;
+}
+
+let online: MACStatus[] = [];
 
 app.get("/online", (req, res) => {
-    res.json(online);
+    res.json([...new Set(online.filter(item => item.online)
+      .map(item => item.memberId))]);
+});
+
+app.get("/metrics", (req, res) => {
+    const metrics: Metric[] = [];
+    for (const mac of online) {
+        metrics.push({
+            type: "gauge",
+            value: mac.online ? 1 : 0,
+            help: "Status of member's MAC online",
+            name: "bksp_member_online",
+            labels: {
+                mac: mac.mac,
+                username: mac.memberUsername,
+                id: mac.memberId
+            }
+        });
+    }
+    const builtMetrics = buildMetrics(metrics)
+    res.status(200).header({
+        "content-type": "text/plain"
+    }).end(builtMetrics);
 });
 
 interface MACsResponse {
-    macs: Record<string, string[]>;
+    macs: {
+        memberId: string;
+        memberUsername: string;
+        mac: string;
+    }[]
 }
 
 async function getMACs(): Promise<MACsResponse> {
@@ -59,24 +93,24 @@ async function getOpnSenseLeases(): Promise<DHCPLease[]> {
     }));
 }
 
-async function fetchOnline(): Promise<string[]> {
+async function fetchOnline(): Promise<MACStatus[]> {
     const macs = await getMACs();
     const leases = await getOpnSenseLeases();
 
     const onlineLeases = new Set<string>(leases.filter(lease => lease.active)
         .map(lease => lease.mac));
-    const online = new Set<string>();
+    const online: MACStatus[] = [];
 
-    for (const user in macs.macs) {
-        const userMacs = macs.macs[user];
-        for (const mac of userMacs) {
-            if (onlineLeases.has(mac)) {
-                online.add(user);
-            }
-        }
+    for (const mac of macs.macs) {
+        online.push({
+            mac: mac.mac,
+            memberId: mac.memberId,
+            memberUsername: mac.memberUsername,
+            online: onlineLeases.has(mac.mac)
+        });
     }
 
-    return [...online].sort();
+    return online;
 }
 
 function startFetchingOnline() {
