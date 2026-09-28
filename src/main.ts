@@ -22,6 +22,7 @@ interface MACStatus {
     memberUsername: string;
     mac: string;
     online: boolean;
+    statsEnabled: boolean;
 }
 
 let online: MACStatus[] = [];
@@ -34,6 +35,9 @@ app.get("/online", (req, res) => {
 app.get("/metrics", (req, res) => {
     const metrics: Metric[] = [];
     for (const mac of online) {
+        if (!mac.statsEnabled) {
+            continue
+        }
         metrics.push({
             type: "gauge",
             value: mac.online ? 1 : 0,
@@ -57,7 +61,8 @@ interface MACsResponse {
         memberId: string;
         memberUsername: string;
         mac: string;
-    }[]
+    }[],
+    statsEnabled: Record<string, boolean>
 }
 
 async function getMACs(): Promise<MACsResponse> {
@@ -106,7 +111,8 @@ async function fetchOnline(): Promise<MACStatus[]> {
             mac: mac.mac,
             memberId: mac.memberId,
             memberUsername: mac.memberUsername,
-            online: onlineLeases.has(mac.mac)
+            online: onlineLeases.has(mac.mac),
+            statsEnabled: !!macs.statsEnabled[mac.memberId]
         });
     }
 
